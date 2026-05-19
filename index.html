@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DP Portfolio Tracker</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter','system-ui','sans-serif'] }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { margin:0; background:#0a0f1e; color:#e2e8f0; font-family:'Inter',system-ui,sans-serif; }
+    ::-webkit-scrollbar { width:6px; height:6px; }
+    ::-webkit-scrollbar-track { background:#1e293b; }
+    ::-webkit-scrollbar-thumb { background:#334155; border-radius:3px; }
+    ::-webkit-scrollbar-thumb:hover { background:#475569; }
+    .fade-in { animation: fadeIn .18s ease; }
+    @keyframes fadeIn { from { opacity:0; transform:scale(.97); } to { opacity:1; transform:scale(1); } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useRef } = React;
+
+    /* ─── helpers ────────────────────────────────────────────────────── */
+    const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+    const fmtUSD = (v) =>
+      '$' + (+v).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 });
+
+    const fmtShort = (v) => {
+      const a = Math.abs(v);
+      if (a >= 1e6) return `$${(v/1e6).toFixed(2)}M`;
+      if (a >= 1e3) return `$${(v/1e3).toFixed(1)}K`;
+      return fmtUSD(v);
+    };
+
+    const fmtPct = (v) => `${v >= 0 ? '+' : ''}${(+v).toFixed(2)}%`;
+
+    const holdingPeriod = (buyDate) => {
+      const d = Math.ceil(Math.abs(new Date() - new Date(buyDate)) / 86400000);
+      if (d < 30)  return `${d} day${d !== 1 ? 's' : ''}`;
+      if (d < 365) { const m = Math.floor(d/30);  return `${m} mo`; }
+      const y = Math.floor(d/365), m = Math.floor((d%365)/30);
+      return m > 0 ? `${y}y ${m}m` : `${y} yr`;
+    };
+
+    const getRec = (buy, cur) => {
+      const p = ((cur - buy) / buy) * 100;
+      if (p < -10) return 'Buy More';
+      if (p >  20) return 'Sell';
+      return 'Hold';
+    };
+
+    const enrich = (s) => {
+      const invested = s.quantity * s.buyPrice;
+      const current  = s.quantity * s.currentPrice;
+      const pnl      = current - invested;
+      const pnlPct   = ((s.currentPrice - s.buyPrice) / s.buyPrice) * 100;
+      return {
+        ...s,
+        invested:  +invested.toFixed(2),
+        current:   +current.toFixed(2),
+        pnl:       +pnl.toFixed(2),
+        pnlPct:    +pnlPct.toFixed(2),
+        holdPeriod: holdingPeriod(s.buyDate),
+        rec:        getRec(s.buyPrice, s.currentPrice)
+      };
+    };
+
+    /* ─── localStorage persistence ───────────────────────────────────── */
+    const STOCKS_KEY   = 'dp_stocks';
+    const SETTINGS_KEY = 'dp_settings';
+
+    const loadStocks = () => {
+      try { return JSON.parse(localStorage.getItem(STOCKS_KEY)) || DEFAULT_STOCKS; }
+      catch { return DEFAULT_STOCKS; }
+    };
+    const saveStocks = (s) => localStorage.setItem(STOCKS_KEY, JSON.stringify(s));
+
+    const loadSettings = () => {
+      try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || { theme:'Technology Growth', description:'Focused on high-growth technology companies' }; }
+      catch { return { theme:'My Portfolio', description:'' }; }
+    };
+    const saveSettings = (s) => localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+
+    const DEFAULT_STOCKS = [
+      { id:'s1', name:'Apple Inc.',           code:'AAPL', buyDate:'2023-01-15', quantity:20,  buyPrice:142.50, currentPrice:185.00 },
+      { id:'s2', name:'Microsoft Corporation',code:'MSFT', buyDate:'2023-03-10', quantity:15,  buyPrice:275.00, currentPrice:420.00 },
+      { id:'s3', name:'NVIDIA Corporation',   code:'NVDA', buyDate:'2023-06-01', quantity:10,  buyPrice:380.00, currentPrice:875.00 },
+      { id:'s4', name:'Amazon.com Inc.',       code:'AMZN', buyDate:'2023-08-20', quantity:25,  buyPrice:135.00, currentPrice:180.00 },
+      { id:'s5', name:'Tesla Inc.',            code:'TSLA', buyDate:'2024-01-10', quantity:30,  buyPrice:240.00, currentPrice:198.00 },
+    ];
+
+    /* ─── icons ──────────────────────────────────────────────────────── */
+    const Icon = ({ d, className='w-5 h-5' }) => (
+      <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={d} />
+      </svg>
+    );
+
+    const ICONS = {
+      chart:    'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',
+      trend:    'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6',
+      tag:      'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z',
+      coin:     'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+      gear:     'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z',
+      plus:     'M12 4v16m8-8H4',
+      refresh:  'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15',
+      edit:     'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
+      trash:    'M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16',
+      close:    'M6 18L18 6M6 6l12 12',
+      minus:    'M5 12h14',
+      arrow:    'M17 8l4 4m0 0l-4 4m4-4H3',
+    };
+
+    /* ─── Header ─────────────────────────────────────────────────────── */
+    function Header({ theme, onSettings }) {
+      return (
+        <header className="bg-[#0d1526] border-b border-slate-800 sticky top-0 z-10 shadow-lg">
+          <div className="max-w-screen-xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex items-center justify-between h-16">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center shadow-md shadow-blue-900/40">
+                  <Icon d={ICONS.trend} className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h1 className="text-sm font-bold text-white leading-tight">DP Portfolio Tracker</h1>
+                  <p className="text-xs text-blue-400/80 leading-tight">{theme}</p>
+                </div>
+              </div>
+              <button onClick={onSettings}
+                className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700/60 transition-colors"
+                title="Portfolio settings">
+                <Icon d={ICONS.gear} className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        </header>
+      );
+    }
+
+    /* ─── StatCard ───────────────────────────────────────────────────── */
+    function StatCard({ label, icon, children }) {
+      return (
+        <div className="bg-[#0d1526] border border-slate-800 rounded-2xl p-5 hover:border-slate-700 transition-colors">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{label}</p>
+            <div className="w-8 h-8 bg-slate-800 rounded-lg flex items-center justify-center text-blue-400 flex-shrink-0">
+              <Icon d={icon} className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="mt-3">{children}</div>
+        </div>
+      );
+    }
+
+    /* ─── Dashboard ──────────────────────────────────────────────────── */
+    function Dashboard({ stocks, settings }) {
+      const enriched = stocks.map(enrich);
+      const inv  = enriched.reduce((s,x) => s + x.invested, 0);
+      const cur  = enriched.reduce((s,x) => s + x.current,  0);
+      const pnl  = cur - inv;
+      const pct  = inv > 0 ? (pnl/inv)*100 : 0;
+      const gain = pnl >= 0;
+
+      const buyMore = enriched.filter(x => x.rec === 'Buy More').length;
+      const hold    = enriched.filter(x => x.rec === 'Hold').length;
+      const sell    = enriched.filter(x => x.rec === 'Sell').length;
+
+      return (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            <StatCard label="Total Stocks" icon={ICONS.chart}>
+              <p className="text-2xl font-bold text-white">
+                {stocks.length}<span className="text-slate-600 text-base font-normal"> / 30</span>
+              </p>
+              <p className="text-xs text-slate-500 mt-0.5">{30 - stocks.length} slots available</p>
+            </StatCard>
+
+            <StatCard label="Portfolio Theme" icon={ICONS.tag}>
+              <p className="text-xl font-bold text-blue-400 truncate">{settings.theme || '—'}</p>
+              <p className="text-xs text-slate-500 mt-0.5 truncate">{settings.description || 'No description'}</p>
+            </StatCard>
+
+            <StatCard label="Invested Value" icon={ICONS.coin}>
+              <p className="text-2xl font-bold text-white">{fmtShort(inv)}</p>
+              <p className="text-xs text-slate-500 mt-0.5">Total capital deployed</p>
+            </StatCard>
+
+            <StatCard label="Current Value" icon={ICONS.trend}>
+              <p className={`text-2xl font-bold ${gain ? 'text-green-400' : 'text-red-400'}`}>{fmtShort(cur)}</p>
+              <p className={`text-xs mt-0.5 font-semibold ${gain ? 'text-green-500' : 'text-red-500'}`}>
+                {gain ? '+' : ''}{fmtShort(pnl)} &nbsp;({fmtPct(pct)})
+              </p>
+            </StatCard>
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            {[
+              { label:'Buy More', count:buyMore, bg:'bg-green-900/20', border:'border-green-800/30', color:'text-green-400', icon:ICONS.plus  },
+              { label:'Hold',     count:hold,    bg:'bg-blue-900/20',  border:'border-blue-800/30',  color:'text-blue-400',  icon:ICONS.minus },
+              { label:'Sell',     count:sell,    bg:'bg-red-900/20',   border:'border-red-800/30',   color:'text-red-400',   icon:ICONS.arrow },
+            ].map(({ label, count, bg, border, color, icon }) => (
+              <div key={label} className={`${bg} border ${border} rounded-xl p-4 flex items-center gap-3`}>
+                <div className={`w-9 h-9 ${bg} rounded-lg flex items-center justify-center flex-shrink-0 border ${border}`}>
+                  <Icon d={icon} className={`w-4 h-4 ${color}`} />
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">{label}</p>
+                  <p className={`text-xl font-bold ${color}`}>{count}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── Recommendation badge ───────────────────────────────────────── */
+    const REC_STYLE = {
+      'Buy More': 'bg-green-500/10 text-green-400 border border-green-500/30',
+      'Hold':     'bg-blue-500/10  text-blue-400  border border-blue-500/30',
+      'Sell':     'bg-red-500/10   text-red-400   border border-red-500/30',
+    };
+
+    /* ─── StockTable ─────────────────────────────────────────────────── */
+    function StockTable({ stocks, onAdd, onEdit, onDelete }) {
+      const enriched = stocks.map(enrich);
+
+      return (
+        <div className="bg-[#0d1526] border border-slate-800 rounded-2xl overflow-hidden">
+          <div className="px-6 py-4 flex items-center justify-between border-b border-slate-800">
+            <div>
+              <h2 className="text-sm font-semibold text-white">Stock Holdings</h2>
+              <p className="text-xs text-slate-500 mt-0.5">{stocks.length} of 30 positions tracked</p>
+            </div>
+            <button onClick={onAdd} disabled={stocks.length >= 30}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors">
+              <Icon d={ICONS.plus} className="w-4 h-4" /> Add Stock
+            </button>
+          </div>
+
+          {enriched.length === 0 ? (
+            <div className="py-20 text-center">
+              <div className="w-14 h-14 bg-slate-800 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <Icon d={ICONS.chart} className="w-7 h-7 text-slate-600" />
+              </div>
+              <p className="text-slate-400 font-medium">No stocks yet</p>
+              <p className="text-slate-600 text-sm mt-1">Click &ldquo;Add Stock&rdquo; to start tracking</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[900px]">
+                <thead>
+                  <tr className="border-b border-slate-800">
+                    {['Stock','Code','Holding Period','# Stocks','Buy Price','Current Price','P & L','Recommendation',''].map((h,i) => (
+                      <th key={i} className={`px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap ${
+                        i >= 2 && i <= 6 ? 'text-right' : i === 7 ? 'text-center' : 'text-left'
+                      }`}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/40">
+                  {enriched.map(s => (
+                    <tr key={s.id} className="hover:bg-slate-800/20 transition-colors group">
+                      <td className="px-4 py-3.5">
+                        <p className="text-sm font-semibold text-white whitespace-nowrap">{s.name}</p>
+                        <p className="text-xs text-slate-500">
+                          Since {new Date(s.buyDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className="px-2 py-0.5 bg-slate-800 rounded text-xs font-mono font-bold text-blue-300">{s.code}</span>
+                      </td>
+                      <td className="px-4 py-3.5 text-right text-sm text-slate-300 whitespace-nowrap">{s.holdPeriod}</td>
+                      <td className="px-4 py-3.5 text-right text-sm text-white font-semibold">{s.quantity.toLocaleString()}</td>
+                      <td className="px-4 py-3.5 text-right text-sm text-slate-300 whitespace-nowrap">{fmtUSD(s.buyPrice)}</td>
+                      <td className="px-4 py-3.5 text-right text-sm font-semibold text-white whitespace-nowrap">{fmtUSD(s.currentPrice)}</td>
+                      <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                        <p className={`text-sm font-bold ${s.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {s.pnl >= 0 ? '+' : ''}{fmtUSD(s.pnl)}
+                        </p>
+                        <p className={`text-xs ${s.pnlPct >= 0 ? 'text-green-500/80' : 'text-red-500/80'}`}>{fmtPct(s.pnlPct)}</p>
+                      </td>
+                      <td className="px-4 py-3.5 text-center">
+                        <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${REC_STYLE[s.rec]}`}>{s.rec}</span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => onEdit(s)} title="Edit"
+                            className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">
+                            <Icon d={ICONS.edit} className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => onDelete(s.id)} title="Delete"
+                            className="p-1.5 rounded text-slate-400 hover:text-red-400 hover:bg-red-900/20 transition-colors">
+                            <Icon d={ICONS.trash} className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /* ─── Modal wrapper ──────────────────────────────────────────────── */
+    function Modal({ title, onClose, children }) {
+      useEffect(() => {
+        const h = (e) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', h);
+        return () => document.removeEventListener('keydown', h);
+      }, [onClose]);
+
+      return (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          onClick={(e) => e.target === e.currentTarget && onClose()}>
+          <div className="bg-[#0d1526] border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl fade-in">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
+              <h3 className="text-sm font-semibold text-white">{title}</h3>
+              <button onClick={onClose}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">
+                <Icon d={ICONS.close} className="w-4 h-4" />
+              </button>
+            </div>
+            {children}
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── StockModal ─────────────────────────────────────────────────── */
+    function StockModal({ stock, onSave, onClose }) {
+      const TODAY = new Date().toISOString().split('T')[0];
+      const [f, setF] = useState({
+        name: stock?.name || '',
+        code: stock?.code || '',
+        buyDate: stock?.buyDate || TODAY,
+        quantity: stock?.quantity ?? '',
+        buyPrice: stock?.buyPrice ?? '',
+        currentPrice: stock?.currentPrice ?? ''
+      });
+      const [err, setErr] = useState('');
+      const set = k => e => setF(p => ({ ...p, [k]: e.target.value }));
+
+      const bp = parseFloat(f.buyPrice), cp = parseFloat(f.currentPrice);
+      const preview = bp > 0 && cp > 0 ? (() => {
+        const pct = ((cp - bp) / bp) * 100;
+        return { pct, rec: getRec(bp, cp), gain: pct >= 0 };
+      })() : null;
+
+      const submit = (e) => {
+        e.preventDefault();
+        const { name, code, buyDate, quantity, buyPrice, currentPrice } = f;
+        if (!name || !code || !buyDate || !quantity || !buyPrice || !currentPrice)
+          return setErr('All fields are required.');
+        if (+quantity <= 0 || +buyPrice <= 0 || +currentPrice <= 0)
+          return setErr('Quantity and prices must be positive.');
+        setErr('');
+        onSave(f);
+      };
+
+      const ic = 'w-full bg-slate-800 border border-slate-700 text-white placeholder-slate-600 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 transition-colors';
+
+      return (
+        <Modal title={stock ? 'Edit Stock' : 'Add New Stock'} onClose={onClose}>
+          <form onSubmit={submit} className="px-6 py-5 space-y-4">
+            {err && <div className="p-3 bg-red-900/20 border border-red-700/40 rounded-lg text-red-400 text-sm">{err}</div>}
+
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Stock Name</label>
+              <input value={f.name} onChange={set('name')} placeholder="e.g. Apple Inc." className={ic} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5">Stock Code (Ticker)</label>
+                <input value={f.code} onChange={set('code')} placeholder="e.g. AAPL"
+                  className={ic + ' uppercase'} style={{textTransform:'uppercase'}} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5">Buy Date</label>
+                <input type="date" value={f.buyDate} max={TODAY} onChange={set('buyDate')} className={ic} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5"># Stocks</label>
+                <input type="number" value={f.quantity} onChange={set('quantity')}
+                  placeholder="0" min="0.001" step="any" className={ic} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5">Buy Price ($)</label>
+                <input type="number" value={f.buyPrice} onChange={set('buyPrice')}
+                  placeholder="0.00" min="0.01" step="any" className={ic} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5">Current Price ($)</label>
+                <input type="number" value={f.currentPrice} onChange={set('currentPrice')}
+                  placeholder="0.00" min="0.01" step="any" className={ic} />
+              </div>
+            </div>
+
+            {preview && (
+              <div className={`p-3 rounded-lg border ${
+                preview.gain ? 'bg-green-900/20 border-green-800/30' : 'bg-red-900/20 border-red-800/30'
+              }`}>
+                <p className="text-xs text-slate-500 mb-0.5">Live Preview</p>
+                <p className={`text-sm font-bold ${preview.gain ? 'text-green-400' : 'text-red-400'}`}>
+                  {preview.gain ? '+' : ''}{preview.pct.toFixed(2)}%
+                  <span className="text-slate-400 font-normal mx-2">&middot;</span>
+                  Recommendation: <span className={`${
+                    preview.rec === 'Buy More' ? 'text-green-400' :
+                    preview.rec === 'Sell' ? 'text-red-400' : 'text-blue-400'
+                  }`}>{preview.rec}</span>
+                </p>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-1">
+              <button type="button" onClick={onClose}
+                className="flex-1 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium rounded-lg transition-colors">Cancel</button>
+              <button type="submit"
+                className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition-colors">
+                {stock ? 'Update Stock' : 'Add Stock'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      );
+    }
+
+    /* ─── SettingsModal ──────────────────────────────────────────────── */
+    function SettingsModal({ settings, onSave, onClose }) {
+      const [f, setF] = useState({ theme: settings.theme || '', description: settings.description || '' });
+      const [err, setErr] = useState('');
+      const set = k => e => setF(p => ({ ...p, [k]: e.target.value }));
+
+      const submit = (e) => {
+        e.preventDefault();
+        if (!f.theme.trim()) return setErr('Portfolio theme is required.');
+        setErr('');
+        onSave(f);
+      };
+
+      const ic = 'w-full bg-slate-800 border border-slate-700 text-white placeholder-slate-600 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 transition-colors';
+
+      return (
+        <Modal title="Portfolio Settings" onClose={onClose}>
+          <form onSubmit={submit} className="px-6 py-5 space-y-4">
+            {err && <div className="p-3 bg-red-900/20 border border-red-700/40 rounded-lg text-red-400 text-sm">{err}</div>}
+
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Portfolio Theme</label>
+              <input value={f.theme} onChange={set('theme')}
+                placeholder="e.g. Technology Growth" className={ic} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Description</label>
+              <textarea value={f.description} onChange={set('description')}
+                placeholder="Describe your investment strategy&hellip;" rows={3}
+                className={ic + ' resize-none'} />
+            </div>
+
+            <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700/40">
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Recommendation thresholds &mdash;
+                <span className="text-green-400 font-semibold"> Buy More</span>: P&amp;L &lt; &minus;10%&ensp;
+                <span className="text-blue-400 font-semibold">Hold</span>: &minus;10% to +20%&ensp;
+                <span className="text-red-400 font-semibold">Sell</span>: P&amp;L &gt; +20%
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button type="button" onClick={onClose}
+                className="flex-1 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium rounded-lg transition-colors">Cancel</button>
+              <button type="submit"
+                className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition-colors">Save Settings</button>
+            </div>
+          </form>
+        </Modal>
+      );
+    }
+
+    /* ─── App ────────────────────────────────────────────────────────── */
+    function App() {
+      const [stocks,   setStocks]   = useState(loadStocks);
+      const [settings, setSettings] = useState(loadSettings);
+      const [addOpen,  setAddOpen]  = useState(false);
+      const [editing,  setEditing]  = useState(null);
+      const [cfgOpen,  setCfgOpen]  = useState(false);
+      const [toast,    setToast]    = useState(null);
+
+      const showToast = (msg, type='success') => {
+        setToast({ msg, type });
+        setTimeout(() => setToast(null), 2800);
+      };
+
+      const persist = (next) => { saveStocks(next); setStocks(next); };
+
+      const addStock = (f) => {
+        if (stocks.length >= 30) return showToast('Maximum 30 stocks reached.', 'error');
+        const s = {
+          id: uid(),
+          name: f.name.trim(),
+          code: f.code.trim().toUpperCase(),
+          buyDate: f.buyDate,
+          quantity: +f.quantity,
+          buyPrice: +f.buyPrice,
+          currentPrice: +f.currentPrice
+        };
+        persist([...stocks, s]);
+        setAddOpen(false);
+        showToast(`${s.code} added to portfolio.`);
+      };
+
+      const updateStock = (f) => {
+        persist(stocks.map(s => s.id === editing.id ? {
+          ...s,
+          name: f.name.trim(),
+          code: f.code.trim().toUpperCase(),
+          buyDate: f.buyDate,
+          quantity: +f.quantity,
+          buyPrice: +f.buyPrice,
+          currentPrice: +f.currentPrice
+        } : s));
+        setEditing(null);
+        showToast(`${f.code.toUpperCase()} updated.`);
+      };
+
+      const deleteStock = (id) => {
+        const s = stocks.find(x => x.id === id);
+        if (!window.confirm(`Remove ${s?.name || 'this stock'} from your portfolio?`)) return;
+        persist(stocks.filter(x => x.id !== id));
+        showToast(`${s?.code} removed.`, 'info');
+      };
+
+      const saveSettings = (f) => {
+        saveSettings_(f);
+        setSettings(f);
+        setCfgOpen(false);
+        showToast('Settings saved.');
+      };
+      const saveSettings_ = (f) => { saveSettings(f); };
+
+      /* avoid name collision */
+      const persistSettings = (f) => { saveSettings(f); setSettings(f); setCfgOpen(false); showToast('Settings saved.'); };
+
+      return (
+        <div className="min-h-screen bg-[#0a0f1e] text-slate-100">
+          <Header theme={settings.theme} onSettings={() => setCfgOpen(true)} />
+
+          <main className="max-w-screen-xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+            <Dashboard stocks={stocks} settings={settings} />
+            <StockTable
+              stocks={stocks}
+              onAdd={() => setAddOpen(true)}
+              onEdit={(s) => setEditing(s)}
+              onDelete={deleteStock}
+            />
+          </main>
+
+          {/* Toast */}
+          {toast && (
+            <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-xl shadow-lg text-sm font-medium fade-in z-50 ${
+              toast.type === 'error' ? 'bg-red-600 text-white' :
+              toast.type === 'info'  ? 'bg-slate-700 text-slate-100' :
+              'bg-green-600 text-white'
+            }`}>{toast.msg}</div>
+          )}
+
+          {addOpen  && <StockModal onSave={addStock}    onClose={() => setAddOpen(false)} />}
+          {editing  && <StockModal stock={editing} onSave={updateStock} onClose={() => setEditing(null)} />}
+          {cfgOpen  && <SettingsModal settings={settings} onSave={persistSettings} onClose={() => setCfgOpen(false)} />}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
