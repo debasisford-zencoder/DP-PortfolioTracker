@@ -1,0 +1,52 @@
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440001",
+    "name": "Apple Inc.",
+    "code": "AAPL",
+    "buyDate": "2023-01-15",
+    "quantity": 20,
+    "buyPrice": 142.50,
+    "currentPrice": 185.00,
+    "createdAt": "2023-01-15T00:00:00.000Z"
+  },
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440002",
+    "name": "Microsoft Corporation",
+    "code": "MSFT",
+    "buyDate": "2023-03-10",
+    "quantity": 15,
+    "buyPrice": 275.00,
+    "currentPrice": 420.00,
+    "createdAt": "2023-03-10T00:00:00.000Z"
+  },
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440003",
+    "name": "NVIDIA Corporation",
+    "code": "NVDA",
+    "buyDate": "2023-06-01",
+    "quantity": 10,
+    "buyPrice": 380.00,
+    "currentPrice": 875.00,
+    "createdAt": "2023-06-01T00:00:00.000Z"
+  },
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440004",
+    "name": "Amazon.com Inc.",
+    "code": "AMZN",
+    "buyDate": "2023-08-20",
+    "quantity": 25,
+    "buyPrice": 135.00,
+    "currentPrice": 180.00,
+    "createdAt": "2023-08-20T00:00:00.000Z"
+  },
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440005",
+    "name": "Tesla Inc.",
+    "code": "TSLA",
+    "buyDate": "2024-01-10",
+    "quantity": 30,
+    "buyPrice": 240.00,
+    "currentPrice": 198.00,
+    "createdAt": "2024-01-10T00:00:00.000Z"
+  }
+]
